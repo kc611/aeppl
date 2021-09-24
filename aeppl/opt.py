@@ -32,10 +32,15 @@ subtensor_ops = (AdvancedSubtensor, AdvancedSubtensor1, Subtensor)
 
 
 class PreserveRVMappings(Feature):
-    r"""Keep track of random variable replacements in a map.
+    r"""Keeps track of random variables and their respective value variables during
+    graph rewrites
 
-    When a `Variable` that is replaced by optimizations, this `Feature` updates
-    the key entries in a map to reflect the new transformed `Variable`\s.
+    When a random variable is replaced in a rewrite, this `Feature` automatically
+    updates the mapping, so that the new variable is linked to the original
+    value variable.
+
+    In addition this `Feature` provides functionality to update a value variable,
+    keeping a mapping between the updated value variables and the original ones.
     """
 
     def __init__(self, rv_values: Dict[TensorVariable, TensorVariable]):
@@ -48,6 +53,7 @@ class PreserveRVMappings(Feature):
             The ``dict`` is updated in-place.
         """
         self.rv_values = rv_values
+        self.original_values = {v: v for v in rv_values.values()}
 
     def on_attach(self, fgraph):
         if hasattr(fgraph, "preserve_rv_mappings"):
@@ -57,7 +63,24 @@ class PreserveRVMappings(Feature):
 
         fgraph.preserve_rv_mappings = self
 
+    def update_value_var(self, old_value, new_value):
+        """Replace a value variable mapping by a transformed version of it.
+
+        This ensures that the transformed value variable will be used when the
+        respective rv node is replaced during a rewrite.
+
+        It also creates a mapping from the transformed value variable to the
+        original value variable.
+        """
+        (rv,) = (rv for rv, value in self.rv_values.items() if value is old_value)
+        self.original_values[new_value] = self.original_values.pop(old_value)
+        self.rv_values[rv] = new_value
+
     def on_change_input(self, fgraph, node, i, r, new_r, reason=None):
+        """
+        Whenever a node is replaced during rewrite, we check if it had a value
+        variable associated with it and map it to the new node.
+        """
         r_value_var = self.rv_values.pop(r, None)
         if r_value_var is not None:
             self.rv_values[new_r] = r_value_var
@@ -109,10 +132,7 @@ def incsubtensor_rv_replace(fgraph, node):
     # Create a new value variable with the indices `idx` set to `data`
     value_var = rv_map_feature.rv_values[rv_var]
     new_value_var = at.set_subtensor(value_var[idx], data)
-
-    # Map new value variable to `base_rv_var` and remove old_mapping
-    rv_map_feature.rv_values[base_rv_var] = new_value_var
-    del rv_map_feature.rv_values[rv_var]
+    rv_map_feature.update_value_var(value_var, new_value_var)
 
     # Return the `RandomVariable` being indexed
     return [base_rv_var]

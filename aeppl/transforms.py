@@ -145,11 +145,7 @@ def transform_values(fgraph: FunctionGraph, node: Node) -> Optional[List[Node]]:
     new_value_var = transform.backward(value_var, *trans_node.inputs)
     if value_var.name and getattr(transform, "name", None):
         new_value_var.name = f"{value_var.name}_{transform.name}"
-
-    # Map TransformedRV to new value var and delete old mapping
-    new_rv_var = trans_node.outputs[1]
-    rv_map_feature.rv_values[new_rv_var] = new_value_var
-    del rv_map_feature.rv_values[rv_var]
+    rv_map_feature.update_value_var(value_var, new_value_var)
 
     return trans_node.outputs
 
